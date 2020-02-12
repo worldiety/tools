@@ -48,8 +48,9 @@ func listRecursive(parent *Package) error {
 					parent.Packages = append(parent.Packages, orphanPkg)
 				}
 			}
-
-			parent.Packages = append(parent.Packages, childPkg)
+			if childPkg != nil {
+				parent.Packages = append(parent.Packages, childPkg)
+			}
 		}
 	}
 
