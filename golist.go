@@ -34,25 +34,19 @@ func listRecursive(parent *Package) error {
 			childPkg, err := GoList(childPath, false)
 
 			if err != nil {
-				if strings.Contains(err.Error(), "cannot find module for path") {
-					pseudoOrphaned, err := findHiddenPackageCandidatesDirectories(childPath)
-					if err != nil {
-						return fmt.Errorf("failed to find hidden packages: %w", err)
-					}
-					// the relationship is not correct, but at least we won't miss them and they are children
-					for _, orphan := range pseudoOrphaned {
-						orphanPkg, err := GoList(orphan, false)
-						if err != nil {
-							return fmt.Errorf("failed to read orphan dir %s: %w", parent.Dir, err)
-						}
-
-						parent.Packages = append(parent.Packages, orphanPkg)
-					}
-
-					continue
+				pseudoOrphaned, err := findHiddenPackageCandidatesDirectories(childPath)
+				if err != nil {
+					return fmt.Errorf("failed to find hidden packages: %w", err)
 				}
+				// the relationship is not correct, but at least we won't miss them and they are children
+				for _, orphan := range pseudoOrphaned {
+					orphanPkg, err := GoList(orphan, false)
+					if err != nil {
+						return fmt.Errorf("failed to read orphan dir %s: %w", parent.Dir, err)
+					}
 
-				return fmt.Errorf("failed to inspect '%s': %w", childPath, err)
+					parent.Packages = append(parent.Packages, orphanPkg)
+				}
 			}
 
 			parent.Packages = append(parent.Packages, childPkg)
