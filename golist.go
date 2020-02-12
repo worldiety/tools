@@ -7,20 +7,106 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
+// listRecursive is like GoList but scans through all available folders. The first encountered error is returned.
+// However "cannot find module for path" errors are silently ignored, because they occur with empty or non-go folders.
+func listRecursive(parent *Package) error {
+	files, err := ioutil.ReadDir(parent.Dir)
+	if err != nil {
+		return fmt.Errorf("failed to read dir %s: %w", parent.Dir, err)
+	}
+
+	for _, file := range files {
+		// ignore hidden
+		if strings.HasPrefix(file.Name(), ".") {
+			continue
+		}
+
+		if file.IsDir() {
+			childPath := filepath.Join(parent.Dir, file.Name())
+			childPkg, err := GoList(childPath, false)
+
+			if err != nil {
+				if strings.Contains(err.Error(), "cannot find module for path") {
+					pseudoOrphaned, err := findHiddenPackageCandidatesDirectories(childPath)
+					if err != nil {
+						return fmt.Errorf("failed to find hidden packages: %w", err)
+					}
+					// the relationship is not correct, but at least we won't miss them and they are children
+					for _, orphan := range pseudoOrphaned {
+						orphanPkg, err := GoList(orphan, false)
+						if err != nil {
+							return fmt.Errorf("failed to read orphan dir %s: %w", parent.Dir, err)
+						}
+
+						parent.Packages = append(parent.Packages, orphanPkg)
+					}
+
+					continue
+				}
+
+				return fmt.Errorf("failed to inspect '%s': %w", childPath, err)
+			}
+
+			parent.Packages = append(parent.Packages, childPkg)
+		}
+	}
+
+	return nil
+}
+
+// findHiddenPackageCandidatesDirectories walks down the hierarchy and returns non hidden folders with *.go files.
+func findHiddenPackageCandidatesDirectories(rootDir string) ([]string, error) {
+	var res []string
+
+	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, _ error) error {
+		if strings.HasPrefix(info.Name(), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if !info.IsDir() {
+			return nil
+		}
+
+		files, err := ioutil.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		containsGo := false
+		for _, file := range files {
+			if strings.HasSuffix(file.Name(), ".go") {
+				containsGo = true
+				break
+			}
+		}
+		if containsGo {
+			res = append(res, path)
+		}
+		return nil
+	})
+
+	return res, err
+}
+
 // GoList performs 'go list -json' within the given directory. There is no public API for this and
 // it is recommended to use the installed go version, instead of bringing our own.
-func GoList(dir string) (*Package, error) {
+func GoList(dir string, recursive bool) (*Package, error) {
 	cmd := exec.Command("go", "list", "-json")
 	cmd.Dir = dir
 	res, err := cmd.CombinedOutput()
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to 'go list -json': %w", err)
+		return nil, fmt.Errorf("failed to 'go list -json': %w: %s", err, res)
 	}
 
 	p := &Package{}
@@ -28,6 +114,13 @@ func GoList(dir string) (*Package, error) {
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse output from 'go list -json': %w", err)
+	}
+
+	if recursive {
+		err = listRecursive(p)
+		if err != nil {
+			return p, fmt.Errorf("failed to list packages: %w", err)
+		}
 	}
 
 	return p, nil
@@ -100,6 +193,27 @@ type Package struct {
 	TestImports  []string `json:",omitempty"` // imports from TestGoFiles
 	XTestGoFiles []string `json:",omitempty"` // _test.go files outside package
 	XTestImports []string `json:",omitempty"` // imports from XTestGoFiles
+
+	Packages []*Package // Packages contains all children packages
+}
+
+// ListFiles simply returns all absolute file names of regular files ignoring any errors.
+func (p *Package) ListFiles() []string {
+	var res []string
+
+	files, err := ioutil.ReadDir(p.Dir)
+
+	if err != nil {
+		return res
+	}
+
+	for _, f := range files {
+		if f.Mode().IsRegular() {
+			res = append(res, filepath.Join(p.Dir, f.Name()))
+		}
+	}
+
+	return res
 }
 
 func (p *Package) String() string {

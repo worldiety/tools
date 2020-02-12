@@ -8,8 +8,9 @@ tools is a go library with wrappings and tools around the language, which are us
     import "github.com/worldiety/tools"
     
     package main(){
-        pkg, err := tools.GoList(".")
+        pkg, err := tools.GoList(".", false)
         //...
     }
     ```
+  Actually it can do even more and may scan all sub packages as well.
 
